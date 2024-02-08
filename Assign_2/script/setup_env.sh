@@ -2,4 +2,4 @@
 
 # Install packages
 
-pip3 install cryptography base64 hmac secrets random os pyaes hashlib
+pip3 install cryptography secrets

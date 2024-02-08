@@ -1,16 +1,18 @@
 # Write your script here
-import secrets,random,hmac,os,pyaes,hashlib
-from cryptography.exceptions import InvalidSignature
+import secrets,random,hmac,hashlib
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes,serialization
-from cryptography.hazmat.primitives.asymmetric import rsa, padding,ec
 from cryptography.hazmat.primitives.ciphers import algorithms
+from cryptography.hazmat.primitives.asymmetric import rsa, padding,ec
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.cmac import CMAC
+from cryptography.hazmat.primitives.padding import PKCS7
+from cryptography.exceptions import InvalidSignature,InvalidTag
 from base64 import b64encode, b64decode
 
 def pad(data, block_size):
     padding = block_size - (len(data) % block_size)
-    return data + bytes([padding] * padding)
+    return data + bytes([padding] * padding).decode()
 
 def unpad(data):
     padding = data[-1]
@@ -101,26 +103,27 @@ class ExecuteCrypto(object): # Do not change this
     def encrypt(self, algo, key, plaintext, nonce): # Do not change this
         """Encrypt the given plaintext"""
         key_,plaintext_,nonce_ = key,plaintext,nonce
+        print(algo,key,plaintext,nonce)
         # Write your script here
         backend = default_backend()
-        ciphertext = None
+        ciphertext = b''
 
         if algo == 'AES-128-CBC-ENC': # Do not change this
             # Write your script here
             key_ = key_[:16]
-            block_size = 16
-            plaintext_ = pad(plaintext_, block_size)
-            print(len(plaintext_))
-            iv = os.urandom(16)
-            aes = pyaes.AESModeOfOperationCBC(key_, iv=nonce)
-            ciphertext = aes.encrypt(plaintext_)
+            padder = PKCS7(128).padder() 
+            plaintext_ = padder.update(plaintext_.encode()) + padder.finalize()
+            cipher = Cipher(algorithms.AES(key_), modes.CBC(nonce_), backend=backend)
+            encryptor = cipher.encryptor()
+            ciphertext = encryptor.update(plaintext_) + encryptor.finalize()
+                
 
         elif algo == 'AES-128-CTR-ENC': # Do not change this
             # Write your script here
-            key_ = key_[:16] 
-            aes = pyaes.AESModeOfOperationCTR(key_, counter=pyaes.Counter(initial_value=int.from_bytes(nonce_, byteorder='big')))
-            ciphertext = aes.encrypt(plaintext_)
-
+            key_ = key_[:16]
+            cipher = Cipher(algorithms.AES(key_), modes.CTR(nonce_), backend=backend)
+            encryptor = cipher.encryptor()
+            ciphertext = encryptor.update(plaintext_.encode()) + encryptor.finalize()
         elif algo == 'RSA-2048-ENC': # Do not change this
             # Write your script here
             public_key = serialization.load_pem_public_key(key_, backend=backend)
@@ -152,19 +155,24 @@ class ExecuteCrypto(object): # Do not change this
         # Write your script here
         key_,ciphertext_,nonce_ = key,ciphertext,nonce
         backend = default_backend()
-        plaintext = None
+        plaintext = b''
         if algo=='AES-128-CBC-DEC': # Do not change this
             # Write your script here
             key_ = key_[:16]
-            aes = pyaes.AESModeOfOperationCBC(key_, iv=nonce_ )
-            padded_plaintext = aes.decrypt(ciphertext_)
-            plaintext = unpad(padded_plaintext)
+            cipher = Cipher(algorithms.AES(key_), modes.CBC(nonce_), backend=backend)
+            decryptor = cipher.decryptor()
+            plaintext_padded = decryptor.update(ciphertext_) + decryptor.finalize()
+            unpadder = PKCS7(128).unpadder()
+            plaintext = unpadder.update(plaintext_padded) + unpadder.finalize()
+            plaintext = plaintext.decode()
 
         elif algo == 'AES-128-CTR-DEC': # Do not change this
             # Write your script here
-            key_ = key_[:16]
-            aes = pyaes.AESModeOfOperationCTR(key_, counter=pyaes.Counter(initial_value=int.from_bytes(nonce_, byteorder='big')))
-            plaintext = aes.encrypt(ciphertext_)
+            key_ = key_[:16] 
+            cipher = Cipher(algorithms.AES(key_), modes.CTR(nonce_), backend=backend)
+            decryptor = cipher.decryptor()
+            plaintext = decryptor.update(ciphertext_) + decryptor.finalize()
+            plaintext = plaintext.decode()
 
         elif algo == 'RSA-2048-DEC': # Do not change this
             # Write your script here
@@ -202,6 +210,7 @@ class ExecuteCrypto(object): # Do not change this
 
         # Write your script here
         key_,plaintext_ = key,plaintext
+        print(algo, key, plaintext, nonce)
         backend = default_backend()
         auth_tag = None
 
@@ -209,20 +218,20 @@ class ExecuteCrypto(object): # Do not change this
             # Write your script here
             key_ = key_[:16]
             cipher = CMAC(algorithms.AES(key_), backend=backend)
-            cipher.update(plaintext_)
+            cipher.update(plaintext_.encode())
             auth_tag = cipher.finalize()
 
         elif algo =='SHA3-256-HMAC-GEN': # Do not change this
             # Write your script here
             h = hmac.new(key_, digestmod=hashlib.sha3_256)
-            h.update(plaintext_)
+            h.update(plaintext_.encode())
             auth_tag = h.digest()
 
         elif algo =='RSA-2048-SHA3-256-SIG-GEN': # Do not change this
             # Write your script here
             private_key = serialization.load_pem_private_key(key_, password=None, backend=backend)
             signature = private_key.sign(
-                plaintext_,
+                plaintext_.encode(),
                 padding.PKCS1v15(),
                 hashes.SHA3_256()
             )
@@ -232,9 +241,8 @@ class ExecuteCrypto(object): # Do not change this
             # Write your script here
             private_key = serialization.load_pem_private_key(key_, password=None, backend=backend) 
             signature = private_key.sign(
-                plaintext_,
-                padding.PKCS1v15(),
-                hashes.SHA3_256()
+                plaintext_.encode(),
+                ec.ECDSA(hashes.SHA3_256())
             )
             auth_tag = b64encode(signature)
 
@@ -262,6 +270,7 @@ class ExecuteCrypto(object): # Do not change this
 
         # Write your script here
         key_,plaintext_,auth_tag_ = key,plaintext,auth_tag
+        # print(key,plaintext,auth_tag)
         backend = default_backend()
         auth_tag_valid = None
 
@@ -269,7 +278,7 @@ class ExecuteCrypto(object): # Do not change this
             # Write your script here
             key_ = key_[:16]
             cipher = CMAC(algorithms.AES(key_), backend=backend)
-            cipher.update(plaintext_)
+            cipher.update(plaintext_.encode())
             try:
                 cipher.verify(auth_tag_)
                 auth_tag_valid = True
@@ -280,7 +289,7 @@ class ExecuteCrypto(object): # Do not change this
         elif algo =='SHA3-256-HMAC-VRF': # Do not change this
             # Write your script here
             h = hmac.new(key_, digestmod=hashlib.sha3_256)
-            h.update(plaintext_)
+            h.update(plaintext_.encode())
             calculated_auth_tag = h.digest()
             auth_tag_valid = hmac.compare_digest(calculated_auth_tag, auth_tag)
 
@@ -291,7 +300,7 @@ class ExecuteCrypto(object): # Do not change this
                 signature = b64decode(auth_tag)
                 public_key.verify(
                     signature,
-                    plaintext_,
+                    plaintext_.encode(),
                     padding.PKCS1v15(),
                     hashes.SHA3_256()
                 )
@@ -306,9 +315,8 @@ class ExecuteCrypto(object): # Do not change this
                 signature = b64decode(auth_tag)
                 public_key.verify(
                     signature,
-                    plaintext_,
-                    padding.PKCS1v15(),
-                    hashes.SHA3_256()
+                    plaintext_.encode(),
+                    ec.ECDSA(hashes.SHA3_256())
                 )
                 auth_tag_valid = True
             except InvalidSignature:
@@ -339,13 +347,19 @@ class ExecuteCrypto(object): # Do not change this
         """Encrypt and generate the authentication tag for the given plaintext"""
 
         # Write your script here
-        key_encrypt_, key_generate_auth_, plaintext_, nonce_ = key_encrypt, key_generate_auth, plaintext, nonce
+        key_encrypt_, plaintext_, nonce_ = key_encrypt, plaintext.encode(), nonce
+        print(key_encrypt, plaintext, nonce)
         ciphertext = None
         auth_tag = None
+        backend = default_backend()
         if algo == 'AES-128-GCM-GEN': # Do not change this
             # Write your script here
-            ciphertext = self.encrypt('AES-128-CTR-ENC',key_encrypt_,plaintext_,nonce_)
-            auth_tag = self.generate_auth_tag('AES-128-CMAC-GEN',key_generate_auth_,plaintext_,nonce_)
+            key_encrypt_ = key_encrypt_[:16]
+            cipher = Cipher(algorithms.AES(key_encrypt_), modes.GCM(nonce_), backend=backend)
+            encryptor = cipher.encryptor()
+            ciphertext = encryptor.update(plaintext_) + encryptor.finalize()
+            auth_tag = encryptor.tag 
+
             
         else:
             raise Exception("Unexpected algorithm") # Do not change this
@@ -373,14 +387,22 @@ class ExecuteCrypto(object): # Do not change this
         """Decrypt and verify the authentication tag for the given plaintext"""
 
         # Write your script here
-        key_decrypt_, key_verify_auth_, ciphertext_, nonce_, auth_tag_ = key_decrypt, key_verify_auth, ciphertext, nonce, auth_tag
+        key_decrypt_, ciphertext_, nonce_, auth_tag_ = key_decrypt, ciphertext, nonce, auth_tag
         plaintext = None
         auth_tag_valid = None
+        backend = default_backend()
 
         if algo == 'AES-128-GCM-VRF': # Do not change this
             # Write your script here
-            plaintext = self.decrypt('AES-128-CTR-DEC',key_decrypt_,ciphertext_,nonce_)
-            auth_tag_valid = self.verify_auth_tag('AES-128-CMAC-VRF',key_verify_auth_,plaintext,nonce_,auth_tag)
+            key_decrypt_ = key_decrypt_[:16]
+            cipher = Cipher(algorithms.AES(key_decrypt_), modes.GCM(nonce_, auth_tag_), backend=backend)
+            decryptor = cipher.decryptor()
+            try:
+                plaintext = decryptor.update(ciphertext_) + decryptor.finalize()
+                plaintext = plaintext.decode()
+                auth_tag_valid = True
+            except InvalidTag:
+                auth_tag_valid = False
         else:
             raise Exception("Unexpected algorithm") # Do not change this
 
